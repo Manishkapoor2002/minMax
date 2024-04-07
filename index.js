@@ -37,8 +37,9 @@ const userSchema = new Schema({
     "PrivateAccount": Boolean,
     'age': Number,
     'posts': [{ type: mongoose.Schema.Types.ObjectId, ref: 'Post' }],
-    'followings': [{ type: mongoose.Schema.Types.ObjectId, ref: 'Following' }],
-    'followers': [{ type: mongoose.Schema.Types.ObjectId, ref: 'Follower' }]
+    'followings': [],
+    'followers': [],
+    'block':[]
 })
 
 const postSchema = new Schema({
@@ -48,29 +49,18 @@ const postSchema = new Schema({
     'comments': [{ type: mongoose.Schema.Types.ObjectId, ref: 'Comment' }],
     'privatePost': Boolean,
 })
-const followingSchema = new Schema({
-    'username': String,
-    'followedBy': String,
-    'date': Date,
-})
-const followerSchema = new Schema({
-    'username': String,
-    'followeTo': String,
-    'data': Date
-})
+
 
 const commentSchema = new Schema({
     'username': String,
     'commentBody': String,
-    'likes': [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }]
+    'likes': []
 })
 
 
 
 const User = mongoose.model('User', userSchema);
 const Post = mongoose.model('Post', postSchema);
-const Following = mongoose.model('Following', followingSchema);
-const Follower = mongoose.model('Follower', followerSchema);
 const Comment = mongoose.model('Comment', commentSchema)
 mongoose.connect('mongodb://localhost:27017/')
 
@@ -86,7 +76,7 @@ app.post('/signup', async (req, res) => {
         res.status(403).json({ "msg": 'Email Already Exist' })
     } else {
         const token = jwt.sign({ 'username': username, 'email': email }, Secretkey, { expiresIn: '7days' })
-        console.log(username + " <-> " + email + " <-> " + password + " <-> " + token)
+        // console.log(username + " <-> " + email + " <-> " + password + " <-> " + token)
         const newUser = new User({ 'username': username, 'password': password, 'email': email, 'PrivateAccount': false })
         await newUser.save();
         res.status(200).json({ 'msg': 'User has been created', "token": token })
@@ -102,7 +92,7 @@ app.post('/login', async (req, res) => {
         const userEmail = userNameverify.email;
         const token = jwt.sign({ 'username': username, 'email': userEmail }, Secretkey, { expiresIn: '7days' })
         console.log(username + " <-> " + userEmail + " <-> " + password + " <-> " + token)
-        res.status(200).json({ 'msg': 'User has been successfully logged in ' })
+        res.status(200).json({ 'msg': 'User has been successfully logged in ' ,'token' :token})
     } else {
         res.status(403).json({ 'msg': 'User authorization failed' });
     }
@@ -114,11 +104,6 @@ app.post('/UploadPost', authenticationJWT, async (req, res) => {
     const currUser = await User.findOne({ 'username': req.user.username })
     console.log(req.user.username)
     if (currUser) {
-        // currUser.posts.map(async(val)=>{
-        //     const temp = await Post.findById(val._id)
-        //     console.log(temp.imageURL)
-        // })
-
         if (imageURL.length < 3) {
             res.status(401).json("Image length is too short or image is not found")
         } else {
@@ -142,18 +127,32 @@ app.post('/UploadPost', authenticationJWT, async (req, res) => {
 
 app.get('/profile/:username', authenticationJWT, async (req, res) => {
     const user = await User.findOne({ 'username': req.params.username });
+    const currUser = await User.findOne({'username':req.user.username});
 
-    if (user) {
-        res.status(200).json({
-            "username": user.username,
-            "email": user.email,
-            "posts": user.posts,
-            "followings": user.followings,
-            "followers": user.followers
-        });
-    } else {
-        res.status(403).json({ "msg": "User not found" })
+
+    if(currUser){
+        if (user) {
+            const blockCurrUser = currUser.block.includes(user.username);
+            const blockOtherUser = user.block.includes(currUser.username);
+            if(!blockCurrUser && !blockOtherUser){
+                res.status(200).json({
+                    "username": user.username,
+                    "email": user.email,
+                    "posts": user.posts,
+                    "followings": user.followings,
+                    "followers": user.followers
+                });
+            }else{
+                res.status(203).json({'msg':'Something went wrong','hint':'blocked!!'})
+            }
+           
+        } else {
+            res.status(403).json({ "msg": "User not found" })
+        }
+    }else{
+        res.status(403).json({ "msg": "Please login again!!" })
     }
+   
 })
 
 
@@ -161,49 +160,39 @@ app.post('/follow/:username', authenticationJWT, async (req, res) => {
     const otherUser = await User.findOne({ 'username': req.params.username });
     const currUser = await User.findOne({ "username": req.user.username })
 
+
     if (currUser) {
-        if (otherUser) {
-            // already following or not!!   
-           
-            const check = await User.findOne({ 'username': currUser.username });
-            const checkArray = check.followings;
-            const verify = checkArray.map(val => val.username === otherUser.username);
-            
+        if (otherUser) {            
+            const followArray = otherUser.followers;
+            const verify = followArray.includes(currUser.username);
+
+
             if (otherUser.username == currUser.username) {
-                res.status(203).json({ "msg": "following yourself is not possible!!" })
-            }else  if(verify){
-                res.status(403).json({"msg":"You are already follows the "+req.params.username})
-            }else {
-                var currentDate = currDateWithTime();;
+                    res.status(203).json({ "msg": "following yourself is not possible!!" })
+            }else if(verify){
+                res.status(403).json({"msg": currUser.username+ " are already follows the "+req.params.username})
+            }else{ 
 
-                const newFollower = new Follower({
-                    "username": currUser.username,
-                    "followeTo": otherUser.username,
-                    'date': currentDate
-                })
+            const blockCurrUser = currUser.block.includes(otherUser.username);
+            const blockOtherUser = otherUser.block.includes(currUser.username);
 
-                const newFollowing = new Following({
-                    "username": otherUser.username,
-                    "followedBy": currUser.username,
-                    'date': currentDate
-                })
-
-                await newFollower.save();
-                await newFollowing.save();
-                currUser.followings.push(newFollowing);
-                await currUser.save();
-                otherUser.followers.push(newFollower);
+            if(!blockCurrUser && !blockOtherUser){
+                otherUser.followers.push(currUser.username);
                 await otherUser.save();
-
+                currUser.followings.push(otherUser.username);
+                await currUser.save();
                 res.status(200).json({ "msg": "followed successfully!!" });
+            }else{
+                res.status(203).json({'msg':'Something went wrong','hint':'blocked!!'})
             }
-
+              
+            }
 
         } else {
             res.status(403).json({ "msg": "User not found!!" })
         }
     } else {
-        res.status(403).json({ "msg": "Please re login!" })
+        res.status(403).json({ "msg": "Please login again!!" })
     }
 })
 
@@ -227,6 +216,96 @@ app.get('/followers/:username',authenticationJWT,async (req,res)=>{
     }
 })
 
+app.post('/block/:username',authenticationJWT,async(req,res)=>{
+    const currUser = await User.findOne({"username":req.user.username});
+    const otherUser = await User.findOne({"username":req.params.username});
+
+    if(currUser){
+        if(otherUser){
+            const currUserFollow = currUser.followers;
+            const currUserFollowing = currUser.followings;
+            
+            const verifyFollow = currUserFollow.includes(otherUser.username);
+            const verifyFollowing = currUserFollowing.includes(otherUser.username);
+
+            if(verifyFollowing){
+                currUser.followings.pop(otherUser.username)
+                otherUser.followers.pop(currUser.username)
+            }
+
+            if(verifyFollow){
+                otherUser.followings.pop(currUser.username)
+                currUser.followers.pop(otherUser.username)
+            }
+
+            currUser.block.push(otherUser.username);
+
+            await currUser.save();
+            await otherUser.save();
+
+            res.status(200).json({"msg":"User has been block !!"})
+
+        }else{
+            res.status(403).json({"msg":"user Not Found"});
+        }
+    }else{
+        res.status(403).json({"msg":"Login Again!!"})
+    }
+})
+
+
+app.post('/unblock/:username',authenticationJWT,async (req,res)=>{
+    const currUser = await User.findOne({'username':req.user.username});
+    const otherUser = await User.findOne({'username':req.params.username})
+
+
+    if(currUser){
+        if(otherUser){
+            const blockList = currUser.block;
+            const verify = blockList.includes(req.params.username);
+            if(verify){
+                console.log(otherUser.username)
+                currUser.block.pop(otherUser.username)
+                await currUser.save()
+                res.status(200).json({'msg':"User unblocked successfully!!!"})
+            }else{
+                res.status(203).json({'msg':'user is not blocked!!'})
+            }
+        }else{
+            res.status(403).json({'msg':'User Not found!!'})
+        }
+    }else{
+        res.status(403).json({'msg':'Something went wrong ,Please login again !!'})
+    }
+})
+
+
+app.post('/comment/:postId',authenticationJWT,async (req,res)=>{
+    const {commentBody,likes} = req.body;
+    const currUser = await User.findOne({'username':req.user.username});
+    const verify = await Post.findById(req.params.postId);
+    
+    
+    if(currUser){
+
+        if(verify){
+            const newComment = new Comment({
+                'username': currUser.username,
+                commentBody,
+                'likes':[]
+            })
+            await newComment.save();
+            const posts = await Post.findById(req.params.postId)
+             posts.comments.push(newComment);
+             posts.save();
+             res.status(200).json({'msg':'Comment successfully uploaded!!'})
+        }else{
+            res.status(403).json({'msg':'Post not found!!!!'})
+        }  
+    }else{
+        res.status(403).json({'msg':'Please login agains!!'})
+    }
+})
 app.get('/', (req, res) => {
     res.send("Manish kapoor")
 })
@@ -236,20 +315,3 @@ app.listen(port, () => {
     console.log("successfuly listening on Port number " + port)
 })
 
-
-
-function currDateWithTime() {
-    var currentDate = new Date();
-
-    var year = currentDate.getFullYear();
-    var month = currentDate.getMonth() + 1;
-    var day = currentDate.getDate();
-    var hour = currentDate.getHours();
-    var minute = currentDate.getMinutes();
-    var second = currentDate.getSeconds();
-
-    var formattedDate = year + "-" + month + "-" + day;
-    var formattedTime = hour + ":" + minute + ":" + second;
-    return (formattedDate + " " + formattedTime);
-
-}
