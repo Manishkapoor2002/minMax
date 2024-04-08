@@ -6,23 +6,19 @@ import {User,Post,Comment} from './db/index.js'
 const app = express();
 import {authenticationJWT} from './middleware/auth.js'
 import dotenv from 'dotenv';
+import bcrypt from 'bcrypt'
 dotenv.config();
 const port = process.env.PORT || 5000
 const Secretkey = process.env.SECRET_KEY
-
-console.log(Secretkey)
-
-
-
 
 app.use(express.json())
 
 mongoose.connect('mongodb://localhost:27017/')
 
-
-
 app.post('/signup', async (req, res) => {
     const { username, password, email ,profilePic} = req.body;
+    const salt = bcrypt.genSaltSync(10);
+    const hashedPassword = await bcrypt.hash(password,salt)
     const userNameverify = await User.findOne({ username })
     const userEmailVerify = await User.findOne({ email })
     if (userNameverify) {
@@ -32,7 +28,7 @@ app.post('/signup', async (req, res) => {
     } else {
         const token = jwt.sign({ 'username': username, 'email': email }, Secretkey, { expiresIn: '7days' })
         // console.log(username + " <-> " + email + " <-> " + password + " <-> " + token)
-        const newUser = new User({ 'username': username, 'password': password, 'email': email, 'PrivateAccount': false,'profilePic':profilePic || "" })
+        const newUser = new User({ 'username': username, 'password': hashedPassword, 'email': email, 'PrivateAccount': false,'profilePic':profilePic || "" })
         await newUser.save();
         res.status(200).json({ 'msg': 'User has been created', "token": token })
     }
@@ -40,14 +36,18 @@ app.post('/signup', async (req, res) => {
 
 app.post('/login', async (req, res) => {
     const { username, password } = req.body;
-    const userNameverify = await User.findOne({ username, password })
-    //    const userEmailVerify = await User.findOne({email,password})
+    const userNameverify = await User.findOne({ username })
 
     if (userNameverify) {
-        const userEmail = userNameverify.email;
-        const token = jwt.sign({ 'username': username, 'email': userEmail }, Secretkey, { expiresIn: '7days' })
-        console.log(username + " <-> " + userEmail + " <-> " + password + " <-> " + token)
-        res.status(200).json({ 'msg': 'User has been successfully logged in ' ,'token' :token})
+        const check = await bcrypt.compare(password,userNameverify.password);
+        if(check){
+            const userEmail = userNameverify.email;
+            const token = jwt.sign({ 'username': username, 'email': userEmail }, Secretkey, { expiresIn: '7days' })
+            console.log(username + " <-> " + userEmail + " <-> " + password + " <-> " + token)
+            res.status(200).json({ 'msg': 'User has been successfully logged in ' ,'token' :token})
+        }else{
+            res.status(403).json("Password is wrong!!!")
+        }
     } else {
         res.status(403).json({ 'msg': 'User authorization failed' });
     }
